@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
 Document ingestion script for Bahá'í Writings semantic search.
-Processes .docx files, chunks by paragraphs, and stores embeddings in ChromaDB.
+Processes .docx files, chunks by paragraphs, and stores embeddings in Pinecone.
 """
 
 import os
 import logging
 from pathlib import Path
 from typing import List, Dict, Any
-import chromadb
-from chromadb.config import Settings
+from pinecone import Pinecone, ServerlessSpec
 from docx import Document
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -23,22 +22,34 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class BahaiWritingsIngestor:
-    def __init__(self, openai_api_key: str, chroma_db_path: str = "./chroma_db"):
+    def __init__(self, openai_api_key: str, pinecone_api_key: str):
         """Initialize the ingestion pipeline."""
-        self.client = OpenAI(api_key=openai_api_key)
-        self.chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-        self.collection_name = "bahai_writings"
+        self.openai_client = OpenAI(api_key=openai_api_key)
+        self.pc = Pinecone(api_key=pinecone_api_key)
+        self.index_name = "bahai-writings"
+        self.dimension = 3072  # Dimension for text-embedding-3-large
         
-        # Create or get collection
+        # Create or get index
         try:
-            self.collection = self.chroma_client.get_collection(self.collection_name)
-            logger.info(f"Using existing collection: {self.collection_name}")
-        except:
-            self.collection = self.chroma_client.create_collection(
-                name=self.collection_name,
-                metadata={"description": "Bahá'í Writings semantic search collection"}
-            )
-            logger.info(f"Created new collection: {self.collection_name}")
+            # Check if index exists
+            if self.index_name not in [index.name for index in self.pc.list_indexes()]:
+                logger.info(f"Creating new index: {self.index_name}")
+                self.pc.create_index(
+                    name=self.index_name,
+                    dimension=self.dimension,
+                    metric="cosine",
+                    spec=ServerlessSpec(
+                        cloud="aws",
+                        region="us-east-1"
+                    )
+                )
+            else:
+                logger.info(f"Using existing index: {self.index_name}")
+            
+            self.index = self.pc.Index(self.index_name)
+        except Exception as e:
+            logger.error(f"Error initializing Pinecone index: {e}")
+            raise
 
     def extract_paragraphs_from_docx(self, file_path: str) -> List[Dict[str, Any]]:
         """Extract paragraphs from a .docx file."""
@@ -63,7 +74,7 @@ class BahaiWritingsIngestor:
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for text using OpenAI's text-embedding-3-large model."""
         try:
-            response = self.client.embeddings.create(
+            response = self.openai_client.embeddings.create(
                 model="text-embedding-3-large",
                 input=text,
                 encoding_format="float"
@@ -74,26 +85,27 @@ class BahaiWritingsIngestor:
             raise
 
     def ingest_paragraphs(self, paragraphs: List[Dict[str, Any]]):
-        """Generate embeddings and store paragraphs in ChromaDB."""
+        """Generate embeddings and store paragraphs in Pinecone."""
         logger.info(f"Generating embeddings for {len(paragraphs)} paragraphs...")
         
-        documents = []
-        embeddings = []
-        metadatas = []
-        ids = []
+        vectors = []
         
         for paragraph in paragraphs:
             try:
                 # Generate embedding
                 embedding = self.generate_embedding(paragraph["text"])
                 
-                documents.append(paragraph["text"])
-                embeddings.append(embedding)
-                metadatas.append({
-                    "source_file": paragraph["source_file"],
-                    "paragraph_id": paragraph["paragraph_id"]
-                })
-                ids.append(paragraph["document_id"])
+                # Create vector for Pinecone
+                vector = {
+                    "id": paragraph["document_id"],
+                    "values": embedding,
+                    "metadata": {
+                        "text": paragraph["text"],
+                        "source_file": paragraph["source_file"],
+                        "paragraph_id": paragraph["paragraph_id"]
+                    }
+                }
+                vectors.append(vector)
                 
                 logger.info(f"Processed paragraph {paragraph['paragraph_id']}")
                 
@@ -101,15 +113,16 @@ class BahaiWritingsIngestor:
                 logger.error(f"Error processing paragraph {paragraph['paragraph_id']}: {e}")
                 continue
         
-        # Add to ChromaDB collection
-        if documents:
-            self.collection.add(
-                documents=documents,
-                embeddings=embeddings,
-                metadatas=metadatas,
-                ids=ids
-            )
-            logger.info(f"Successfully ingested {len(documents)} paragraphs into ChromaDB")
+        # Upsert to Pinecone index
+        if vectors:
+            # Pinecone has a limit on batch size, so we'll process in chunks
+            batch_size = 100
+            for i in range(0, len(vectors), batch_size):
+                batch = vectors[i:i + batch_size]
+                self.index.upsert(vectors=batch)
+                logger.info(f"Upserted batch {i//batch_size + 1} of {(len(vectors) + batch_size - 1)//batch_size}")
+            
+            logger.info(f"Successfully ingested {len(vectors)} paragraphs into Pinecone")
 
     def ingest_document(self, file_path: str):
         """Complete ingestion pipeline for a single document."""
@@ -124,23 +137,26 @@ class BahaiWritingsIngestor:
         
         logger.info(f"Completed ingestion of {file_path}")
 
-    def get_collection_stats(self):
-        """Get statistics about the collection."""
-        count = self.collection.count()
-        logger.info(f"Collection '{self.collection_name}' contains {count} documents")
+    def get_index_stats(self):
+        """Get statistics about the index."""
+        stats = self.index.describe_index_stats()
+        count = stats['total_vector_count']
+        logger.info(f"Index '{self.index_name}' contains {count} vectors")
         return count
 
 def main():
     """Main ingestion function."""
     # Check for required environment variables
     openai_api_key = st.secrets["OPENAI_API_KEY"]
-    if not openai_api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is required")
+    pinecone_api_key = st.secrets["PINECONE_API_KEY"]
     
-    chroma_db_path = os.getenv("CHROMA_DB_PATH", "./chroma_db")
+    if not openai_api_key:
+        raise ValueError("OPENAI_API_KEY is required in streamlit secrets")
+    if not pinecone_api_key:
+        raise ValueError("PINECONE_API_KEY is required in streamlit secrets")
     
     # Initialize ingestor
-    ingestor = BahaiWritingsIngestor(openai_api_key, chroma_db_path)
+    ingestor = BahaiWritingsIngestor(openai_api_key, pinecone_api_key)
     
     # Find and process .docx files in current directory
     docx_files = list(Path(".").glob("*.docx"))
@@ -156,7 +172,7 @@ def main():
             logger.error(f"Failed to ingest {docx_file}: {e}")
     
     # Print final statistics
-    ingestor.get_collection_stats()
+    ingestor.get_index_stats()
 
 if __name__ == "__main__":
     main()

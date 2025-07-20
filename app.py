@@ -5,32 +5,32 @@ Streamlit web application for semantic search over Bahá'í Writings.
 
 import os
 import streamlit as st
-import chromadb
+from pinecone import Pinecone
 from openai import OpenAI
 from dotenv import load_dotenv
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 
 # Load environment variables
 load_dotenv()
 
 class BahaiSemanticSearch:
-    def __init__(self, openai_api_key: str, chroma_db_path: str = "./chroma_db"):
+    def __init__(self, openai_api_key: str, pinecone_api_key: str):
         """Initialize the semantic search engine."""
-        self.client = OpenAI(api_key=openai_api_key)
-        self.chroma_client = chromadb.PersistentClient(path=chroma_db_path)
-        self.collection_name = "bahai_writings"
+        self.openai_client = OpenAI(api_key=openai_api_key)
+        self.pc = Pinecone(api_key=pinecone_api_key)
+        self.index_name = "bahai-writings"
         
         try:
-            self.collection = self.chroma_client.get_collection(self.collection_name)
+            self.index = self.pc.Index(self.index_name)
         except Exception as e:
-            st.error(f"Failed to connect to ChromaDB collection: {e}")
-            st.error("Please run the ingestion script first: `python ingest.py`")
+            st.error(f"Failed to connect to Pinecone index: {e}")
+            st.error("Please run the ingestion script first: `streamlit run ingest.py`")
             st.stop()
 
     def generate_query_embedding(self, query: str) -> List[float]:
         """Generate embedding for search query."""
         try:
-            response = self.client.embeddings.create(
+            response = self.openai_client.embeddings.create(
                 model="text-embedding-3-large",
                 input=query,
                 encoding_format="float"
@@ -51,20 +51,21 @@ class BahaiSemanticSearch:
             return []
         
         try:
-            # Search in ChromaDB
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=n_results
+            # Search in Pinecone
+            results = self.index.query(
+                vector=query_embedding,
+                top_k=n_results,
+                include_metadata=True
             )
             
             # Format results
             formatted_results = []
-            for i in range(len(results['ids'][0])):
+            for match in results['matches']:
                 formatted_results.append({
-                    'text': results['documents'][0][i],
-                    'source_file': results['metadatas'][0][i]['source_file'],
-                    'paragraph_id': results['metadatas'][0][i]['paragraph_id'],
-                    'distance': results['distances'][0][i] if 'distances' in results else None
+                    'text': match['metadata']['text'],
+                    'source_file': match['metadata']['source_file'],
+                    'paragraph_id': match['metadata']['paragraph_id'],
+                    'score': match['score']
                 })
             
             return formatted_results
@@ -73,11 +74,11 @@ class BahaiSemanticSearch:
             st.error(f"Search error: {e}")
             return []
 
-    def get_collection_stats(self) -> Dict[str, Any]:
-        """Get collection statistics."""
+    def get_index_stats(self) -> Dict[str, Any]:
+        """Get index statistics."""
         try:
-            count = self.collection.count()
-            return {"total_documents": count}
+            stats = self.index.describe_index_stats()
+            return {"total_vectors": stats['total_vector_count']}
         except Exception as e:
             return {"error": str(e)}
 
@@ -92,19 +93,21 @@ def main():
     st.title("📚 Bahá'í Writings Semantic Search")
     st.markdown("Search through the Bahá'í Writings using semantic similarity")
     
-    # Check for API key
+    # Check for API keys
     openai_api_key = st.secrets["OPENAI_API_KEY"]
+    pinecone_api_key = st.secrets["PINECONE_API_KEY"]
+    
     if not openai_api_key:
-        st.error("⚠️ OPENAI_API_KEY environment variable is required")
-        st.markdown("Please set your OpenAI API key in a `.env` file:")
-        st.code("OPENAI_API_KEY=your_api_key_here")
+        st.error("⚠️ OPENAI_API_KEY is required in streamlit secrets")
+        st.stop()
+    if not pinecone_api_key:
+        st.error("⚠️ PINECONE_API_KEY is required in streamlit secrets")
         st.stop()
     
     # Initialize search engine
     @st.cache_resource
     def get_search_engine():
-        chroma_db_path = os.getenv("CHROMA_DB_PATH", "./chroma_db")
-        return BahaiSemanticSearch(openai_api_key, chroma_db_path)
+        return BahaiSemanticSearch(openai_api_key, pinecone_api_key)
     
     try:
         search_engine = get_search_engine()
@@ -112,12 +115,12 @@ def main():
         st.error(f"Failed to initialize search engine: {e}")
         st.stop()
     
-    # Display collection statistics
-    stats = search_engine.get_collection_stats()
+    # Display index statistics
+    stats = search_engine.get_index_stats()
     if "error" not in stats:
-        st.sidebar.info(f"📊 Total documents: {stats['total_documents']}")
+        st.sidebar.info(f"📊 Total vectors: {stats['total_vectors']}")
     else:
-        st.sidebar.error(f"Database error: {stats['error']}")
+        st.sidebar.error(f"Index error: {stats['error']}")
     
     # Search interface
     st.markdown("### Search Query")
@@ -150,25 +153,25 @@ def main():
                     with col2:
                         st.caption(f"📍 Paragraph: {result['paragraph_id']}")
                     
-                    if result['distance'] is not None:
-                        similarity_score = 1 - result['distance']
-                        st.caption(f"🎯 Relevance: {similarity_score:.3f}")
+                    if result['score'] is not None:
+                        st.caption(f"🎯 Relevance: {result['score']:.3f}")
         else:
             st.warning("No results found. Try a different search query.")
     
     # Instructions
-    st.markdown("---")
-    st.markdown("### How to use")
-    st.markdown("""
-    1. **First time setup**: Run `python ingest.py` to process and index the documents
-    2. **Search**: Enter keywords, phrases, or concepts in the search box
-    3. **Semantic matching**: The search finds conceptually similar passages, not just exact keyword matches
-    4. **Results**: Click on results to expand and read the full text
-    """)
+    # st.markdown("---")
+    # st.markdown("### How to use")
+    # st.markdown("""
+    # 1. **First time setup**: Run `streamlit run ingest.py` to process and index the documents
+    # 2. **Search**: Enter keywords, phrases, or concepts in the search box
+    # 3. **Semantic matching**: The search finds conceptually similar passages, not just exact keyword matches
+    # 4. **Results**: Click on results to expand and read the full text
+    # """)
     
     # Footer
     st.markdown("---")
-    st.markdown("*Powered by OpenAI embeddings and ChromaDB*")
+    st.markdown("*An experiment by Nathan Ré*")
+    st.markdown("*Powered by OpenAI embeddings and Pinecone*")
 
 if __name__ == "__main__":
     main()
