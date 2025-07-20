@@ -13,6 +13,7 @@ from chromadb.config import Settings
 from docx import Document
 from openai import OpenAI
 from dotenv import load_dotenv
+import streamlit as st 
 
 # Load environment variables
 load_dotenv()
@@ -132,7 +133,7 @@ class BahaiWritingsIngestor:
 def main():
     """Main ingestion function."""
     # Check for required environment variables
-    openai_api_key = os.getenv("OPENAI_API_KEY")
+    openai_api_key = st.secrets["OPENAI_API_KEY"]
     if not openai_api_key:
         raise ValueError("OPENAI_API_KEY environment variable is required")
     

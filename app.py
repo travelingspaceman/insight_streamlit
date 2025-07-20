@@ -93,7 +93,7 @@ def main():
     st.markdown("Search through the Bahá'í Writings using semantic similarity")
     
     # Check for API key
-    openai_api_key = os.getenv("OPENAI_API_KEY")
+    openai_api_key = st.secrets["OPENAI_API_KEY"]
     if not openai_api_key:
         st.error("⚠️ OPENAI_API_KEY environment variable is required")
         st.markdown("Please set your OpenAI API key in a `.env` file:")
