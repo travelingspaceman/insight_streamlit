@@ -3,15 +3,15 @@
 Streamlit web application for semantic search over Bahá'í Writings.
 """
 
-import os
+# import os
 import streamlit as st
 from pinecone import Pinecone
 from openai import OpenAI
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 from typing import List, Dict, Any
 
 # Load environment variables
-load_dotenv()
+# load_dotenv()
 
 class BahaiSemanticSearch:
     def __init__(self, openai_api_key: str, pinecone_api_key: str):
@@ -158,20 +158,6 @@ def main():
         else:
             st.warning("No results found. Try a different search query.")
     
-    # Instructions
-    # st.markdown("---")
-    # st.markdown("### How to use")
-    # st.markdown("""
-    # 1. **First time setup**: Run `streamlit run ingest.py` to process and index the documents
-    # 2. **Search**: Enter keywords, phrases, or concepts in the search box
-    # 3. **Semantic matching**: The search finds conceptually similar passages, not just exact keyword matches
-    # 4. **Results**: Click on results to expand and read the full text
-    # """)
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("*An experiment by Nathan Ré*")
-    st.markdown("*Powered by OpenAI embeddings and Pinecone*")
 
 if __name__ == "__main__":
     main()
