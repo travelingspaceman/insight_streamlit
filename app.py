@@ -161,12 +161,12 @@ class BahaiSemanticSearch:
 def main():
     """Main Streamlit application."""
     st.set_page_config(
-        page_title="Bahá'í Writings Semantic Search",
+        page_title="Insight",
         page_icon="📚",
         layout="wide"
     )
     
-    st.title("📚 Bahá'í Writings Semantic Search")
+    st.title("📚 Insight")
     st.markdown("Search through the Bahá'í Writings using semantic similarity")
     
     # Check for API keys
