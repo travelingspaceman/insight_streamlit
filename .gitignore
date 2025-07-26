@@ -13,3 +13,4 @@ wheels/
 .streamlit/secrets.toml
 chroma_db/
 .env
+.DS_Store

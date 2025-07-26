@@ -8,7 +8,7 @@ import streamlit as st
 from pinecone import Pinecone
 from openai import OpenAI
 # from dotenv import load_dotenv
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Load environment variables
 # load_dotenv()
@@ -59,7 +59,7 @@ class BahaiSemanticSearch:
             st.error(f"Error processing journal entry: {e}")
             return ""
 
-    def search(self, query: str, n_results: int = 10) -> List[Dict[str, Any]]:
+    def search(self, query: str, n_results: int = 10, author_filter: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Perform semantic search and return results."""
         if not query.strip():
             return []
@@ -70,11 +70,17 @@ class BahaiSemanticSearch:
             return []
         
         try:
+            # Prepare filter for Pinecone query
+            pinecone_filter = None
+            if author_filter:
+                pinecone_filter = {"author": {"$in": author_filter}}
+            
             # Search in Pinecone
             results = self.index.query(
                 vector=query_embedding,
                 top_k=n_results,
-                include_metadata=True
+                include_metadata=True,
+                filter=pinecone_filter
             )
             
             # Format results
@@ -93,6 +99,57 @@ class BahaiSemanticSearch:
             st.error(f"Search error: {e}")
             return []
 
+    def get_bahai_library_url(self, source_file: str) -> str:
+        """Convert source filename to Bahá'í library URL."""
+        base_url = "https://www.bahai.org/library/authoritative-texts"
+        
+        # Remove .docx extension and convert to lowercase
+        filename = source_file.replace('.docx', '').lower()
+        
+        # Mapping of filenames to library URLs
+        url_mappings = {
+            # Bahá'u'lláh
+            'kitab-i-iqan': f"{base_url}/bahaullah/kitab-i-iqan/",
+            'hidden-words': f"{base_url}/bahaullah/hidden-words/",
+            'gleanings-writings-bahaullah': f"{base_url}/bahaullah/gleanings-writings-bahaullah/",
+            'kitab-i-aqdas-2': f"{base_url}/bahaullah/kitab-i-aqdas/",
+            'epistle-son-wolf': f"{base_url}/bahaullah/epistle-son-wolf/",
+            'gems-divine-mysteries': f"{base_url}/bahaullah/gems-divine-mysteries/",
+            'summons-lord-hosts': f"{base_url}/bahaullah/summons-lord-hosts/",
+            'tablets-bahaullah': f"{base_url}/bahaullah/tablets-bahaullah/",
+            'tabernacle-unity': f"{base_url}/bahaullah/tabernacle-unity/",
+            
+            # 'Abdu'l-Bahá
+            'some-answered-questions': f"{base_url}/abdul-baha/some-answered-questions/",
+            'paris-talks': f"{base_url}/abdul-baha/paris-talks/",
+            'promulgation-universal-peace': f"{base_url}/abdul-baha/promulgation-universal-peace/",
+            'memorials-faithful': f"{base_url}/abdul-baha/memorials-faithful/",
+            'selections-writings-abdul-baha': f"{base_url}/abdul-baha/selections-writings-abdul-baha/",
+            'secret-divine-civilization': f"{base_url}/abdul-baha/secret-divine-civilization/",
+            'travelers-narrative': f"{base_url}/abdul-baha/travelers-narrative/",
+            'will-testament-abdul-baha': f"{base_url}/abdul-baha/will-testament-abdul-baha/",
+            'tablets-divine-plan': f"{base_url}/abdul-baha/tablets-divine-plan/",
+            'tablet-auguste-forel': f"{base_url}/abdul-baha/tablet-auguste-forel/",
+            
+            # The Báb
+            'selections-writings-bab': f"{base_url}/the-bab/selections-writings-bab/",
+            
+            # Shoghi Effendi
+            'advent-divine-justice': f"{base_url}/shoghi-effendi/advent-divine-justice/",
+            'god-passes-by': f"{base_url}/shoghi-effendi/god-passes-by/",
+            'promised-day-come': f"{base_url}/shoghi-effendi/promised-day-come/",
+            'world-order-bahaullah': f"{base_url}/shoghi-effendi/world-order-bahaullah/",
+            
+            # Compilations and other works
+            'prayers-meditations': f"{base_url}/bahaullah/prayers-meditations/",
+            'days-remembrance': f"{base_url}/compilations/days-remembrance/",
+            'light-of-the-world': f"{base_url}/compilations/light-of-the-world/",
+            'turning-point': f"{base_url}/compilations/turning-point/",
+        }
+        
+        # Return specific URL if mapping exists, otherwise return main library page
+        return url_mappings.get(filename, "https://www.bahai.org/library/")
+
     def get_index_stats(self) -> Dict[str, Any]:
         """Get index statistics."""
         try:
@@ -104,12 +161,12 @@ class BahaiSemanticSearch:
 def main():
     """Main Streamlit application."""
     st.set_page_config(
-        page_title="Bahá'í Writings Semantic Search",
+        page_title="Insight",
         page_icon="📚",
         layout="wide"
     )
     
-    st.title("📚 Bahá'í Writings Semantic Search")
+    st.title("📚 Insight")
     st.markdown("Search through the Bahá'í Writings using semantic similarity")
     
     # Check for API keys
@@ -136,31 +193,68 @@ def main():
     
     # Display index statistics
     stats = search_engine.get_index_stats()
-    if "error" not in stats:
-        st.sidebar.info(f"📊 Total vectors: {stats['total_vectors']}")
-    else:
+    if "error" in stats:
         st.sidebar.error(f"Index error: {stats['error']}")
     
-    # Search mode selection
-    st.markdown("### Search Mode")
-    col1, col2 = st.columns(2)
-    with col1:
-        find_quote_mode = st.button("🔍 Find a Quote", use_container_width=True)
-    with col2:
-        journal_entry_mode = st.button("📝 Journal Entry", use_container_width=True)
+    # Search options in sidebar
+    st.sidebar.markdown("### Search Options")
     
-    # Initialize session state for search mode
+    # Author filter
+    author_options = [
+        "All Authors",
+        "Bahá'u'lláh", 
+        "'Abdu'l-Bahá", 
+        "The Báb", 
+        "Shoghi Effendi", 
+        "Universal House of Justice", 
+        "Compilations"
+    ]
+    selected_authors = st.sidebar.multiselect(
+        "Filter by Author:",
+        author_options,
+        default=["All Authors"]
+    )
+    
+    n_results = st.sidebar.slider("Number of results:", 1, 20, 10)
+    
+    # Handle "All Authors" selection
+    if "All Authors" in selected_authors:
+        author_filter = None
+    else:
+        author_filter = selected_authors if selected_authors else None
+    
+    # Search mode selection using buttons with proper state handling
+    st.markdown("### Search Mode")
+    
+    # Initialize with default if not set
     if 'search_mode' not in st.session_state:
         st.session_state.search_mode = 'quote'
     
-    # Update search mode based on button clicks
-    if find_quote_mode:
-        st.session_state.search_mode = 'quote'
-    elif journal_entry_mode:
-        st.session_state.search_mode = 'journal'
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button(
+            "🔍 Find a Quote", 
+            use_container_width=True,
+            type="primary" if st.session_state.search_mode == 'quote' else "secondary",
+            key="quote_button"
+        ):
+            st.session_state.search_mode = 'quote'
+            st.rerun()
+    
+    with col2:
+        if st.button(
+            "📝 Journal Entry", 
+            use_container_width=True,
+            type="primary" if st.session_state.search_mode == 'journal' else "secondary",
+            key="journal_button"
+        ):
+            st.session_state.search_mode = 'journal'
+            st.rerun()
+    
+    search_mode = st.session_state.search_mode
     
     # Display current mode
-    if st.session_state.search_mode == 'quote':
+    if search_mode == 'quote':
         st.info("🔍 **Find a Quote Mode**: Search directly for relevant passages")
         placeholder_text = "e.g., spiritual development, unity of mankind, prayer..."
     else:
@@ -169,20 +263,18 @@ def main():
     
     # Search interface
     st.markdown("### Your Input")
-    query = st.text_input(
+    query = st.text_area(
         "Enter your query:",
-        placeholder=placeholder_text
+        placeholder=placeholder_text,
+        height=100
     )
     
-    # Search options
-    col1, col2 = st.columns([1, 3])
-    # with col1:
-    #     n_results = st.slider("Number of results:", 1, 20, 10)
-    n_results = 10 
+    # Search button
+    search_clicked = st.button("🔍 Search", type="primary", use_container_width=True)
 
     # Perform search
-    if query:
-        if st.session_state.search_mode == 'journal':
+    if query or search_clicked:
+        if search_mode == 'journal':
             with st.spinner("Processing your journal entry..."):
                 processed_query = search_engine.process_journal_entry(query)
             
@@ -192,12 +284,12 @@ def main():
                 # st.markdown("### Related Passages")
                 
                 with st.spinner("Finding related passages..."):
-                    results = search_engine.search(processed_query, n_results)
+                    results = search_engine.search(processed_query, n_results, author_filter)
             else:
                 results = []
         else:
             with st.spinner("Searching..."):
-                results = search_engine.search(query, n_results)
+                results = search_engine.search(query, n_results, author_filter)
         
         if results:
             st.markdown(f"### Search Results ({len(results)} found)")
@@ -206,15 +298,16 @@ def main():
                 with st.expander(f"Result {i} - {result['source_file']} (Para {result['paragraph_id']})"):
                     st.markdown(result['text'])
                     
-                    # Show metadata
-                    col1, col2 = st.columns(2)
+                    # Show metadata and library link
+                    col1, col2, col3 = st.columns([2, 2, 1])
                     with col1:
                         st.caption(f"📄 Source: {result['source_file']}")
                     with col2:
-                        st.caption(f"📍 Paragraph: {result['paragraph_id']}")
+                        st.caption(f"📍 Paragraph: {int(result['paragraph_id'])}")
+                    with col3:
+                        library_url = search_engine.get_bahai_library_url(result['source_file'])
+                        st.link_button("📖 Library", library_url, use_container_width=True)
                     
-                    if result['score'] is not None:
-                        st.caption(f"🎯 Relevance: {result['score']:.3f}")
         else:
             st.warning("No results found. Try a different search query.")
     
