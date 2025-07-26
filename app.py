@@ -223,26 +223,38 @@ def main():
     else:
         author_filter = selected_authors if selected_authors else None
     
-    # Search mode selection
+    # Search mode selection using buttons with proper state handling
     st.markdown("### Search Mode")
-    col1, col2 = st.columns(2)
-    with col1:
-        find_quote_mode = st.button("🔍 Find a Quote", use_container_width=True)
-    with col2:
-        journal_entry_mode = st.button("📝 Journal Entry", use_container_width=True)
     
-    # Initialize session state for search mode
+    # Initialize with default if not set
     if 'search_mode' not in st.session_state:
         st.session_state.search_mode = 'quote'
     
-    # Update search mode based on button clicks
-    if find_quote_mode:
-        st.session_state.search_mode = 'quote'
-    elif journal_entry_mode:
-        st.session_state.search_mode = 'journal'
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button(
+            "🔍 Find a Quote", 
+            use_container_width=True,
+            type="primary" if st.session_state.search_mode == 'quote' else "secondary",
+            key="quote_button"
+        ):
+            st.session_state.search_mode = 'quote'
+            st.rerun()
+    
+    with col2:
+        if st.button(
+            "📝 Journal Entry", 
+            use_container_width=True,
+            type="primary" if st.session_state.search_mode == 'journal' else "secondary",
+            key="journal_button"
+        ):
+            st.session_state.search_mode = 'journal'
+            st.rerun()
+    
+    search_mode = st.session_state.search_mode
     
     # Display current mode
-    if st.session_state.search_mode == 'quote':
+    if search_mode == 'quote':
         st.info("🔍 **Find a Quote Mode**: Search directly for relevant passages")
         placeholder_text = "e.g., spiritual development, unity of mankind, prayer..."
     else:
@@ -251,15 +263,18 @@ def main():
     
     # Search interface
     st.markdown("### Your Input")
-    query = st.text_input(
+    query = st.text_area(
         "Enter your query:",
-        placeholder=placeholder_text
+        placeholder=placeholder_text,
+        height=100
     )
     
+    # Search button
+    search_clicked = st.button("🔍 Search", type="primary", use_container_width=True)
 
     # Perform search
-    if query:
-        if st.session_state.search_mode == 'journal':
+    if query or search_clicked:
+        if search_mode == 'journal':
             with st.spinner("Processing your journal entry..."):
                 processed_query = search_engine.process_journal_entry(query)
             
