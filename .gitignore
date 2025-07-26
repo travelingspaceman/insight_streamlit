@@ -8,7 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
-gleanings-writings-bahaullah.docx
+
+*.docx
 .streamlit/secrets.toml
 chroma_db/
 .env

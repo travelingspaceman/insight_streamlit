@@ -6,6 +6,7 @@ Processes .docx files, chunks by paragraphs, and stores embeddings in Pinecone.
 
 import os
 import logging
+import shutil
 from pathlib import Path
 from typing import List, Dict, Any
 from pinecone import Pinecone, ServerlessSpec
@@ -124,6 +125,24 @@ class BahaiWritingsIngestor:
             
             logger.info(f"Successfully ingested {len(vectors)} paragraphs into Pinecone")
 
+    def move_document_to_indexed(self, file_path: str):
+        """Move document from corpus to corpus_indexed folder after successful ingestion."""
+        source_path = Path(file_path)
+        indexed_dir = Path("./corpus_indexed")
+        
+        # Create corpus_indexed directory if it doesn't exist
+        indexed_dir.mkdir(exist_ok=True)
+        
+        # Define destination path
+        destination_path = indexed_dir / source_path.name
+        
+        try:
+            shutil.move(str(source_path), str(destination_path))
+            logger.info(f"Moved {source_path.name} to corpus_indexed/")
+        except Exception as e:
+            logger.error(f"Failed to move {source_path.name}: {e}")
+            raise
+
     def ingest_document(self, file_path: str):
         """Complete ingestion pipeline for a single document."""
         if not os.path.exists(file_path):
@@ -134,6 +153,9 @@ class BahaiWritingsIngestor:
         
         # Ingest into ChromaDB
         self.ingest_paragraphs(paragraphs)
+        
+        # Move document to indexed folder after successful ingestion
+        self.move_document_to_indexed(file_path)
         
         logger.info(f"Completed ingestion of {file_path}")
 
@@ -159,7 +181,7 @@ def main():
     ingestor = BahaiWritingsIngestor(openai_api_key, pinecone_api_key)
     
     # Find and process .docx files in current directory
-    docx_files = list(Path(".").glob("*.docx"))
+    docx_files = list(Path("./corpus").glob("*.docx"))
     
     if not docx_files:
         logger.warning("No .docx files found in current directory")
