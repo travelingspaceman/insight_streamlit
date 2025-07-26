@@ -252,6 +252,16 @@ class BahaiWritingsIngestor:
         
         logger.info(f"Completed ingestion of {file_path}")
 
+    def clear_index(self):
+        """Clear all vectors from the existing index."""
+        try:
+            logger.info(f"Clearing all vectors from index '{self.index_name}'...")
+            self.index.delete(delete_all=True)
+            logger.info("Index cleared successfully")
+        except Exception as e:
+            logger.error(f"Error clearing index: {e}")
+            raise
+
     def get_index_stats(self):
         """Get statistics about the index."""
         stats = self.index.describe_index_stats()
@@ -272,6 +282,23 @@ def main():
     
     # Initialize ingestor
     ingestor = BahaiWritingsIngestor(openai_api_key, pinecone_api_key)
+    
+    # Check if index has existing data
+    stats = ingestor.get_index_stats()
+    if stats > 0:
+        logger.info(f"Found {stats} existing vectors in the database.")
+        
+        # Ask for user confirmation before clearing
+        confirmation = input(f"This will delete all {stats} existing vectors and re-ingest with new metadata. Continue? (y/N): ").strip().lower()
+        
+        if confirmation in ['y', 'yes']:
+            logger.info("User confirmed. Clearing existing vectors from the database...")
+            ingestor.clear_index()
+        else:
+            logger.info("Operation cancelled by user.")
+            return
+    else:
+        logger.info("No existing vectors found. Proceeding with fresh ingestion.")
     
     # Find and process .docx files in current directory
     docx_files = list(Path("./corpus").glob("*.docx"))
