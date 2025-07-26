@@ -52,6 +52,62 @@ class BahaiWritingsIngestor:
             logger.error(f"Error initializing Pinecone index: {e}")
             raise
 
+    def get_author_from_filename(self, filename: str) -> str:
+        """Determine the author based on filename."""
+        filename_lower = filename.lower().replace('.docx', '')
+        
+        # Bahá'u'lláh
+        bahaullah_works = [
+            'kitab-i-iqan', 'hidden-words', 'gleanings-writings-bahaullah', 
+            'kitab-i-aqdas-2', 'epistle-son-wolf', 'gems-divine-mysteries',
+            'summons-lord-hosts', 'tablets-bahaullah', 'tabernacle-unity',
+            'prayers-meditations'
+        ]
+        
+        # 'Abdu'l-Bahá  
+        abdul_baha_works = [
+            'some-answered-questions', 'paris-talks', 'promulgation-universal-peace',
+            'memorials-faithful', 'selections-writings-abdul-baha', 
+            'secret-divine-civilization', 'travelers-narrative', 
+            'will-testament-abdul-baha', 'tablets-divine-plan', 'tablet-auguste-forel'
+        ]
+        
+        # The Báb
+        bab_works = ['selections-writings-bab']
+        
+        # Shoghi Effendi
+        shoghi_works = [
+            'advent-divine-justice', 'god-passes-by', 'promised-day-come',
+            'world-order-bahaullah'
+        ]
+        
+        # Universal House of Justice (dated documents and institutional)
+        uhj_works = [
+            'the-institution-of-the-counsellors', 'turning-point', 'muhj-1963-1986'
+        ]
+        
+        # Compilations
+        compilation_works = ['days-remembrance', 'light-of-the-world']
+        
+        # Check filename against each category
+        if filename_lower in bahaullah_works:
+            return "Bahá'u'lláh"
+        elif filename_lower in abdul_baha_works:
+            return "'Abdu'l-Bahá"
+        elif filename_lower in bab_works:
+            return "The Báb"
+        elif filename_lower in shoghi_works:
+            return "Shoghi Effendi"
+        elif filename_lower in uhj_works:
+            return "Universal House of Justice"
+        elif filename_lower in compilation_works:
+            return "Compilations"
+        # Handle dated documents (likely UHJ messages)
+        elif filename_lower.startswith(('19', '20')) and '_' in filename_lower:
+            return "Universal House of Justice"
+        else:
+            return "Other"
+
     def extract_paragraphs_from_docx(self, file_path: str) -> List[Dict[str, Any]]:
         """Extract paragraphs from a .docx file, combining short paragraphs."""
         logger.info(f"Processing document: {file_path}")
@@ -101,7 +157,8 @@ class BahaiWritingsIngestor:
                 "text": current_text,
                 "paragraph_id": start_id,  # Use the ID of the first paragraph
                 "source_file": Path(file_path).name,
-                "document_id": document_id
+                "document_id": document_id,
+                "author": self.get_author_from_filename(Path(file_path).name)
             })
         
         logger.info(f"Extracted {len(raw_paragraphs)} raw paragraphs, combined into {len(combined_paragraphs)} final paragraphs")
@@ -138,7 +195,8 @@ class BahaiWritingsIngestor:
                     "metadata": {
                         "text": paragraph["text"],
                         "source_file": paragraph["source_file"],
-                        "paragraph_id": paragraph["paragraph_id"]
+                        "paragraph_id": paragraph["paragraph_id"],
+                        "author": paragraph["author"]
                     }
                 }
                 vectors.append(vector)

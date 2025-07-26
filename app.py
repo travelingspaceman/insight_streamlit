@@ -8,7 +8,7 @@ import streamlit as st
 from pinecone import Pinecone
 from openai import OpenAI
 # from dotenv import load_dotenv
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Load environment variables
 # load_dotenv()
@@ -59,7 +59,7 @@ class BahaiSemanticSearch:
             st.error(f"Error processing journal entry: {e}")
             return ""
 
-    def search(self, query: str, n_results: int = 10) -> List[Dict[str, Any]]:
+    def search(self, query: str, n_results: int = 10, author_filter: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Perform semantic search and return results."""
         if not query.strip():
             return []
@@ -70,11 +70,17 @@ class BahaiSemanticSearch:
             return []
         
         try:
+            # Prepare filter for Pinecone query
+            pinecone_filter = None
+            if author_filter:
+                pinecone_filter = {"author": {"$in": author_filter}}
+            
             # Search in Pinecone
             results = self.index.query(
                 vector=query_embedding,
                 top_k=n_results,
-                include_metadata=True
+                include_metadata=True,
+                filter=pinecone_filter
             )
             
             # Format results
@@ -187,10 +193,35 @@ def main():
     
     # Display index statistics
     stats = search_engine.get_index_stats()
-    if "error" not in stats:
-        st.sidebar.info(f"📊 Total vectors: {stats['total_vectors']}")
-    else:
+    if "error" in stats:
         st.sidebar.error(f"Index error: {stats['error']}")
+    
+    # Search options in sidebar
+    st.sidebar.markdown("### Search Options")
+    
+    # Author filter
+    author_options = [
+        "All Authors",
+        "Bahá'u'lláh", 
+        "'Abdu'l-Bahá", 
+        "The Báb", 
+        "Shoghi Effendi", 
+        "Universal House of Justice", 
+        "Compilations"
+    ]
+    selected_authors = st.sidebar.multiselect(
+        "Filter by Author:",
+        author_options,
+        default=["All Authors"]
+    )
+    
+    n_results = st.sidebar.slider("Number of results:", 1, 20, 10)
+    
+    # Handle "All Authors" selection
+    if "All Authors" in selected_authors:
+        author_filter = None
+    else:
+        author_filter = selected_authors if selected_authors else None
     
     # Search mode selection
     st.markdown("### Search Mode")
@@ -225,11 +256,6 @@ def main():
         placeholder=placeholder_text
     )
     
-    # Search options
-    col1, col2 = st.columns([1, 3])
-    # with col1:
-    #     n_results = st.slider("Number of results:", 1, 20, 10)
-    n_results = 10 
 
     # Perform search
     if query:
@@ -243,12 +269,12 @@ def main():
                 # st.markdown("### Related Passages")
                 
                 with st.spinner("Finding related passages..."):
-                    results = search_engine.search(processed_query, n_results)
+                    results = search_engine.search(processed_query, n_results, author_filter)
             else:
                 results = []
         else:
             with st.spinner("Searching..."):
-                results = search_engine.search(query, n_results)
+                results = search_engine.search(query, n_results, author_filter)
         
         if results:
             st.markdown(f"### Search Results ({len(results)} found)")
