@@ -53,24 +53,59 @@ class BahaiWritingsIngestor:
             raise
 
     def extract_paragraphs_from_docx(self, file_path: str) -> List[Dict[str, Any]]:
-        """Extract paragraphs from a .docx file."""
+        """Extract paragraphs from a .docx file, combining short paragraphs."""
         logger.info(f"Processing document: {file_path}")
         
         doc = Document(file_path)
-        paragraphs = []
+        raw_paragraphs = []
         
+        # First, extract all non-empty paragraphs
         for i, paragraph in enumerate(doc.paragraphs):
             text = paragraph.text.strip()
-            if text and len(text) > 20:  # Filter out very short paragraphs
-                paragraphs.append({
+            if text:  # Only keep non-empty paragraphs
+                raw_paragraphs.append({
                     "text": text,
-                    "paragraph_id": i,
-                    "source_file": Path(file_path).name,
-                    "document_id": f"{Path(file_path).stem}_para_{i}"
+                    "original_id": i
                 })
         
-        logger.info(f"Extracted {len(paragraphs)} paragraphs")
-        return paragraphs
+        # Now combine paragraphs with <min_words words
+        min_words = 100
+        combined_paragraphs = []
+        i = 0
+        
+        while i < len(raw_paragraphs):
+            current_text = raw_paragraphs[i]["text"]
+            current_word_count = len(current_text.split())
+            start_id = raw_paragraphs[i]["original_id"]
+            combined_ids = [start_id]
+            
+            # If current paragraph has <min_words words, combine with next paragraphs
+            if current_word_count < min_words and i < len(raw_paragraphs) - 1:
+                j = i + 1
+                while j < len(raw_paragraphs) and len(current_text.split()) < min_words:
+                    next_text = raw_paragraphs[j]["text"]
+                    current_text += " " + next_text
+                    combined_ids.append(raw_paragraphs[j]["original_id"])
+                    j += 1
+                i = j  # Skip the paragraphs we just combined
+            else:
+                i += 1  # Move to next paragraph
+            
+            # Create the combined paragraph entry
+            if len(combined_ids) == 1:
+                document_id = f"{Path(file_path).stem}_para_{start_id}"
+            else:
+                document_id = f"{Path(file_path).stem}_para_{combined_ids[0]}-{combined_ids[-1]}"
+            
+            combined_paragraphs.append({
+                "text": current_text,
+                "paragraph_id": start_id,  # Use the ID of the first paragraph
+                "source_file": Path(file_path).name,
+                "document_id": document_id
+            })
+        
+        logger.info(f"Extracted {len(raw_paragraphs)} raw paragraphs, combined into {len(combined_paragraphs)} final paragraphs")
+        return combined_paragraphs
 
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for text using OpenAI's text-embedding-3-large model."""
