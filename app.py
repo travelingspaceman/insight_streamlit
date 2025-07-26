@@ -40,6 +40,25 @@ class BahaiSemanticSearch:
             st.error(f"Error generating query embedding: {e}")
             return []
 
+    def process_journal_entry(self, journal_entry: str) -> str:
+        """Process journal entry through GPT-4o-mini and return response for search."""
+        prompt = "Here is a journal entry. Provide a compassionate and uplifting response to the user based on the Teachings of the Baha'i Faith. In your response, restate what the user is saying to you."
+        
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": journal_entry}
+                ],
+                max_tokens=500,
+                temperature=0.7
+            )
+            return response.choices[0].message.content.strip() if response.choices[0].message.content else ""
+        except Exception as e:
+            st.error(f"Error processing journal entry: {e}")
+            return ""
+
     def search(self, query: str, n_results: int = 10) -> List[Dict[str, Any]]:
         """Perform semantic search and return results."""
         if not query.strip():
@@ -122,22 +141,63 @@ def main():
     else:
         st.sidebar.error(f"Index error: {stats['error']}")
     
+    # Search mode selection
+    st.markdown("### Search Mode")
+    col1, col2 = st.columns(2)
+    with col1:
+        find_quote_mode = st.button("🔍 Find a Quote", use_container_width=True)
+    with col2:
+        journal_entry_mode = st.button("📝 Journal Entry", use_container_width=True)
+    
+    # Initialize session state for search mode
+    if 'search_mode' not in st.session_state:
+        st.session_state.search_mode = 'quote'
+    
+    # Update search mode based on button clicks
+    if find_quote_mode:
+        st.session_state.search_mode = 'quote'
+    elif journal_entry_mode:
+        st.session_state.search_mode = 'journal'
+    
+    # Display current mode
+    if st.session_state.search_mode == 'quote':
+        st.info("🔍 **Find a Quote Mode**: Search directly for relevant passages")
+        placeholder_text = "e.g., spiritual development, unity of mankind, prayer..."
+    else:
+        st.info("📝 **Journal Entry Mode**: Share your thoughts and get guidance from the Writings")
+        placeholder_text = "e.g., I'm struggling with patience today, or I feel grateful for..."
+    
     # Search interface
-    st.markdown("### Search Query")
+    st.markdown("### Your Input")
     query = st.text_input(
-        "Enter your search query:",
-        placeholder="e.g., spiritual development, unity of mankind, prayer..."
+        "Enter your query:",
+        placeholder=placeholder_text
     )
     
     # Search options
     col1, col2 = st.columns([1, 3])
-    with col1:
-        n_results = st.slider("Number of results:", 1, 20, 10)
-    
+    # with col1:
+    #     n_results = st.slider("Number of results:", 1, 20, 10)
+    n_results = 10 
+
     # Perform search
     if query:
-        with st.spinner("Searching..."):
-            results = search_engine.search(query, n_results)
+        if st.session_state.search_mode == 'journal':
+            with st.spinner("Processing your journal entry..."):
+                processed_query = search_engine.process_journal_entry(query)
+            
+            if processed_query:
+                # st.markdown("### AI Response to Your Entry")
+                # st.markdown(f"*{processed_query}*")
+                # st.markdown("### Related Passages")
+                
+                with st.spinner("Finding related passages..."):
+                    results = search_engine.search(processed_query, n_results)
+            else:
+                results = []
+        else:
+            with st.spinner("Searching..."):
+                results = search_engine.search(query, n_results)
         
         if results:
             st.markdown(f"### Search Results ({len(results)} found)")
