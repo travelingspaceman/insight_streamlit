@@ -1,40 +1,34 @@
 import Foundation
 
 class PineconeService: ObservableObject {
-    private let apiKey: String
-    private let indexName = "bahai-writings"
-    private let environment: String
+    private let backendBaseURL: String
     
-    init(apiKey: String, environment: String = "us-east-1-aws") {
-        self.apiKey = apiKey
-        self.environment = environment
-    }
-    
-    private var baseURL: String {
-        return "https://\(indexName)-\(environment).pinecone.io"
+    init(backendBaseURL: String = "https://your-backend-url.com/api/pinecone") {
+        self.backendBaseURL = backendBaseURL
     }
     
     func search(queryVector: [Double], topK: Int = 10, authorFilter: [Author]? = nil) async throws -> [SearchResult] {
-        let url = URL(string: "\(baseURL)/query")!
+        let url = URL(string: "\(backendBaseURL)/search")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "Api-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        var filter: [String: Any]? = nil
+        // Prepare author filter array
+        var authorFilterArray: [String]? = nil
         if let authors = authorFilter, !authors.contains(.all) {
-            let authorNames = authors.map { $0.rawValue }
-            filter = ["author": ["$in": authorNames]]
+            authorFilterArray = authors.map { $0.rawValue }
         }
         
-        let requestBody = PineconeQueryRequest(
-            vector: queryVector,
-            topK: topK,
-            includeMetadata: true,
-            filter: filter
-        )
+        var requestBody: [String: Any] = [
+            "vector": queryVector,
+            "topK": topK
+        ]
         
-        request.httpBody = try JSONEncoder().encode(requestBody)
+        if let authorFilter = authorFilterArray {
+            requestBody["authorFilter"] = authorFilter
+        }
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -43,31 +37,42 @@ class PineconeService: ObservableObject {
         }
         
         guard httpResponse.statusCode == 200 else {
-            if let errorData = try? JSONDecoder().decode(PineconeErrorResponse.self, from: data) {
-                throw PineconeError.apiError(errorData.message)
+            // Try to decode error message from backend
+            if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let errorMessage = errorData["error"] as? String {
+                throw PineconeError.apiError(errorMessage)
             }
             throw PineconeError.httpError(httpResponse.statusCode)
         }
         
-        let queryResponse = try JSONDecoder().decode(PineconeQueryResponse.self, from: data)
+        let responseJSON = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let resultsArray = responseJSON?["results"] as? [[String: Any]] else {
+            throw PineconeError.decodingError
+        }
         
-        return queryResponse.matches.compactMap { match in
-            guard let metadata = match.metadata else { return nil }
+        return resultsArray.compactMap { resultDict in
+            guard let text = resultDict["text"] as? String,
+                  let sourceFile = resultDict["sourceFile"] as? String,
+                  let paragraphId = resultDict["paragraphId"] as? Int,
+                  let score = resultDict["score"] as? Double,
+                  let author = resultDict["author"] as? String else {
+                return nil
+            }
+            
             return SearchResult(
-                text: metadata.text,
-                sourceFile: metadata.source_file,
-                paragraphId: metadata.paragraph_id,
-                score: match.score,
-                author: metadata.author
+                text: text,
+                sourceFile: sourceFile,
+                paragraphId: paragraphId,
+                score: score,
+                author: author
             )
         }
     }
     
     func getIndexStats() async throws -> PineconeIndexStats {
-        let url = URL(string: "\(baseURL)/describe_index_stats")!
+        let url = URL(string: "\(backendBaseURL)/stats")!
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue(apiKey, forHTTPHeaderField: "Api-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -77,105 +82,27 @@ class PineconeService: ObservableObject {
         }
         
         guard httpResponse.statusCode == 200 else {
+            // Try to decode error message from backend
+            if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let errorMessage = errorData["error"] as? String {
+                throw PineconeError.apiError(errorMessage)
+            }
             throw PineconeError.httpError(httpResponse.statusCode)
         }
         
-        let statsResponse = try JSONDecoder().decode(PineconeStatsResponse.self, from: data)
-        return PineconeIndexStats(totalVectorCount: statsResponse.totalVectorCount)
-    }
-}
-
-// MARK: - Request/Response Models
-
-struct AnyCodingKey: CodingKey {
-    var stringValue: String
-    var intValue: Int?
-    
-    init?(stringValue: String) {
-        self.stringValue = stringValue
-    }
-    
-    init?(intValue: Int) {
-        self.intValue = intValue
-        self.stringValue = "\(intValue)"
-    }
-}
-
-struct PineconeQueryRequest: Encodable {
-    let vector: [Double]
-    let topK: Int
-    let includeMetadata: Bool
-    let filter: [String: Any]?
-    
-    enum CodingKeys: String, CodingKey {
-        case vector, topK, includeMetadata, filter
-    }
-    
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(vector, forKey: .vector)
-        try container.encode(topK, forKey: .topK)
-        try container.encode(includeMetadata, forKey: .includeMetadata)
+        let responseJSON = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let totalVectorCount = responseJSON?["totalVectorCount"] as? Int else {
+            throw PineconeError.decodingError
+        }
         
-        if let filter = filter {
-            // Convert [String: Any] to Data then to a container
-            let filterData = try JSONSerialization.data(withJSONObject: filter)
-            let filterJSON = try JSONSerialization.jsonObject(with: filterData) as? [String: Any]
-            
-            var filterContainer = container.nestedContainer(keyedBy: AnyCodingKey.self, forKey: .filter)
-            try encodeAnyDictionary(filterJSON ?? [:], to: &filterContainer)
-        }
-    }
-    
-    private func encodeAnyDictionary(_ dict: [String: Any], to container: inout KeyedEncodingContainer<AnyCodingKey>) throws {
-        for (key, value) in dict {
-            let codingKey = AnyCodingKey(stringValue: key)!
-            
-            if let stringValue = value as? String {
-                try container.encode(stringValue, forKey: codingKey)
-            } else if let intValue = value as? Int {
-                try container.encode(intValue, forKey: codingKey)
-            } else if let doubleValue = value as? Double {
-                try container.encode(doubleValue, forKey: codingKey)
-            } else if let boolValue = value as? Bool {
-                try container.encode(boolValue, forKey: codingKey)
-            } else if let arrayValue = value as? [String] {
-                try container.encode(arrayValue, forKey: codingKey)
-            } else if let nestedDict = value as? [String: Any] {
-                var nestedContainer = container.nestedContainer(keyedBy: AnyCodingKey.self, forKey: codingKey)
-                try encodeAnyDictionary(nestedDict, to: &nestedContainer)
-            }
-        }
+        return PineconeIndexStats(totalVectorCount: totalVectorCount)
     }
 }
 
-struct PineconeQueryResponse: Codable {
-    let matches: [PineconeMatch]
-}
-
-struct PineconeMatch: Codable {
-    let id: String
-    let score: Double
-    let metadata: PineconeMetadata?
-}
-
-struct PineconeMetadata: Codable {
-    let text: String
-    let source_file: String
-    let paragraph_id: Int
-    let author: String
-}
-
-struct PineconeStatsResponse: Codable {
-    let totalVectorCount: Int
-}
+// MARK: - Response Models
 
 struct PineconeIndexStats {
     let totalVectorCount: Int
-}
-
-struct PineconeErrorResponse: Codable {
-    let message: String
 }
 
 // MARK: - Errors
@@ -189,13 +116,13 @@ enum PineconeError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
-            return "Invalid response from Pinecone API"
+            return "Invalid response from backend API"
         case .httpError(let code):
-            return "HTTP error \(code) from Pinecone API"
+            return "HTTP error \(code) from backend API"
         case .apiError(let message):
-            return "Pinecone API error: \(message)"
+            return "Backend API error: \(message)"
         case .decodingError:
-            return "Failed to decode Pinecone API response"
+            return "Failed to decode backend API response"
         }
     }
 }

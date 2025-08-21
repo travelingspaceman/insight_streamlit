@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct SearchView: View {
-    @StateObject private var openAIService = OpenAIService(apiKey: "your_openai_api_key_here")
-    @StateObject private var pineconeService = PineconeService(apiKey: "your_pinecone_api_key_here")
+    @StateObject private var openAIService = OpenAIService()
+    @StateObject private var pineconeService = PineconeService()
     
     @State private var searchText = ""
     @State private var searchResults: [SearchResult] = []
