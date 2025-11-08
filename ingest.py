@@ -13,7 +13,6 @@ from pinecone import Pinecone, ServerlessSpec
 from docx import Document
 from openai import OpenAI
 from dotenv import load_dotenv
-import streamlit as st 
 
 # Load environment variables
 load_dotenv()
@@ -272,13 +271,13 @@ class BahaiWritingsIngestor:
 def main():
     """Main ingestion function."""
     # Check for required environment variables
-    openai_api_key = st.secrets["OPENAI_API_KEY"]
-    pinecone_api_key = st.secrets["PINECONE_API_KEY"]
-    
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    pinecone_api_key = os.environ.get("PINECONE_API_KEY")
+
     if not openai_api_key:
-        raise ValueError("OPENAI_API_KEY is required in streamlit secrets")
+        raise ValueError("OPENAI_API_KEY environment variable is required")
     if not pinecone_api_key:
-        raise ValueError("PINECONE_API_KEY is required in streamlit secrets")
+        raise ValueError("PINECONE_API_KEY environment variable is required")
     
     # Initialize ingestor
     ingestor = BahaiWritingsIngestor(openai_api_key, pinecone_api_key)
