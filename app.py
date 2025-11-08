@@ -235,18 +235,14 @@ def create_gradio_interface() -> gr.Blocks:
     except Exception as e:
         raise RuntimeError(f"Failed to initialize search engine: {e}")
 
-    # Custom CSS for theme matching Streamlit colors
-    custom_css = """
-    .gradio-container {
-        background-color: #ece6c2 !important;
-    }
-    .block {
-        background-color: #efe8e2 !important;
-    }
-    button.primary {
-        background-color: #4c8a64 !important;
-    }
-    """
+    # Custom theme with dark mode support
+    theme = gr.themes.Soft(
+        primary_hue="emerald",
+    ).set(
+        button_primary_background_fill="#4c8a64",
+        button_primary_background_fill_hover="#3d6e50",
+        button_primary_text_color="white",
+    )
 
     # Author options
     author_options = [
@@ -259,7 +255,7 @@ def create_gradio_interface() -> gr.Blocks:
         "Compilations"
     ]
 
-    with gr.Blocks(css=custom_css, title="Insight") as app:
+    with gr.Blocks(theme=theme, title="Insight") as app:
         gr.Markdown("# 📚 Insight")
         gr.Markdown("Search through the Bahá'í Writings using semantic similarity")
 
