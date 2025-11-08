@@ -164,15 +164,15 @@ def format_results_html(results: List[Dict[str, Any]], search_engine: BahaiSeman
         library_url = search_engine.get_bahai_library_url(result['source_file'])
 
         html += f"""
-        <details style='margin-bottom: 15px; border: 1px solid #ddd; border-radius: 5px; padding: 10px; background-color: #f9f9f9;'>
+        <details style='margin-bottom: 15px; border: 1px solid var(--border-color-primary); border-radius: 5px; padding: 10px; background-color: var(--background-fill-secondary);'>
             <summary style='cursor: pointer; font-weight: bold; padding: 5px;'>
                 Result {i} - {result['source_file']} (Para {int(result['paragraph_id'])})
             </summary>
-            <div style='margin-top: 10px; padding: 10px; background-color: white; border-radius: 3px;'>
+            <div style='margin-top: 10px; padding: 10px; background-color: var(--background-fill-primary); border-radius: 3px;'>
                 <p style='line-height: 1.6;'>{result['text']}</p>
-                <div style='margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;'>
-                    <span style='color: #666; font-size: 0.9em;'>📄 Source: {result['source_file']}</span>
-                    <span style='color: #666; font-size: 0.9em;'>📍 Paragraph: {int(result['paragraph_id'])}</span>
+                <div style='margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color-primary); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;'>
+                    <span style='font-size: 0.9em;'>📄 Source: {result['source_file']}</span>
+                    <span style='font-size: 0.9em;'>📍 Paragraph: {int(result['paragraph_id'])}</span>
                     <a href='{library_url}' target='_blank' style='background-color: #4c8a64; color: white; padding: 5px 15px; border-radius: 3px; text-decoration: none; font-size: 0.9em;'>📖 Library</a>
                 </div>
             </div>
