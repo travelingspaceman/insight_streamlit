@@ -15,15 +15,11 @@ let package = Package(
             targets: ["InsightApp"]
         ),
     ],
-    dependencies: [
-        .package(url: "https://github.com/objectbox/objectbox-swift.git", from: "4.0.0"),
-    ],
+    dependencies: [],
     targets: [
         .target(
             name: "InsightApp",
-            dependencies: [
-                .product(name: "ObjectBox", package: "objectbox-swift"),
-            ],
+            dependencies: [],
             path: "Sources/InsightApp",
             resources: [
                 .process("Resources")

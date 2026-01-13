@@ -7,6 +7,7 @@ public struct InsightApp: App {
     @State private var vectorStore: VectorStore?
     @State private var searchEngine: SemanticSearchEngine?
     @State private var initError: Error?
+    @State private var loadingStatus: String = "Initializing..."
 
     public init() {}
 
@@ -22,7 +23,7 @@ public struct InsightApp: App {
                         }
                     }
                 } else {
-                    LoadingView()
+                    LoadingView(status: loadingStatus)
                         .task {
                             await initialize()
                         }
@@ -35,7 +36,23 @@ public struct InsightApp: App {
     @MainActor
     private func initialize() async {
         do {
+            loadingStatus = "Opening database..."
             let store = try VectorStore()
+
+            // Import from bundle if database is empty
+            let count = try store.count()
+            if count == 0 {
+                loadingStatus = "Importing writings database..."
+                do {
+                    let imported = try await store.importFromBundle()
+                    print("Imported \(imported) vectors from bundle")
+                } catch ImportError.fileNotFound {
+                    // No bundled data - that's okay, database is just empty
+                    print("No bundled embeddings.json found, starting with empty database")
+                }
+            }
+
+            loadingStatus = "Loading search engine..."
             let engine = SemanticSearchEngine(vectorStore: store)
             self.vectorStore = store
             self.searchEngine = engine
@@ -48,6 +65,8 @@ public struct InsightApp: App {
 // MARK: - Supporting Views
 
 struct LoadingView: View {
+    var status: String = "Initializing..."
+
     var body: some View {
         VStack(spacing: 24) {
             Image(systemName: "book.pages")
@@ -61,7 +80,7 @@ struct LoadingView: View {
             ProgressView()
                 .controlSize(.large)
 
-            Text("Initializing...")
+            Text(status)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }

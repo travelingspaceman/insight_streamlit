@@ -1,5 +1,6 @@
 import Foundation
 import NaturalLanguage
+import Accelerate
 
 /// Errors that can occur during embedding generation
 public enum EmbeddingError: Error, LocalizedError {
@@ -48,31 +49,25 @@ public actor EmbeddingService {
             self.embedding = contextualEmbedding
             self.isReady = true
         } else {
-            // Request asset download
-            NLContextualEmbedding.requestAssets(for: .english) { [weak self] result, error in
-                guard let self else { return }
-                Task {
-                    await self.handleAssetRequest(embedding: contextualEmbedding, result: result, error: error)
+            // Request asset download and wait for it
+            let result = await withCheckedContinuation { (continuation: CheckedContinuation<NLContextualEmbedding.AssetsResult, Never>) in
+                contextualEmbedding.requestAssets { result, _ in
+                    continuation.resume(returning: result)
                 }
             }
-        }
-    }
 
-    private func handleAssetRequest(
-        embedding: NLContextualEmbedding,
-        result: NLContextualEmbedding.AssetsResult,
-        error: Error?
-    ) {
-        guard error == nil, result == .available else {
-            return
-        }
-
-        do {
-            try embedding.load()
-            self.embedding = embedding
-            self.isReady = true
-        } catch {
-            // Asset loading failed, will retry on next prepare()
+            switch result {
+            case .available:
+                try contextualEmbedding.load()
+                self.embedding = contextualEmbedding
+                self.isReady = true
+            case .notAvailable:
+                throw EmbeddingError.embeddingNotAvailable
+            case .error:
+                throw EmbeddingError.assetLoadFailed
+            @unknown default:
+                throw EmbeddingError.assetLoadFailed
+            }
         }
     }
 
@@ -86,7 +81,7 @@ public actor EmbeddingService {
         embedding?.dimension ?? 512
     }
 
-    /// Generate an embedding for the given text
+    /// Generate an embedding for the given text using mean pooling
     /// - Parameter text: The text to generate an embedding for
     /// - Returns: Array of floating point values representing the embedding
     public func generateEmbedding(for text: String) throws -> [Float] {
@@ -95,18 +90,48 @@ public actor EmbeddingService {
         }
 
         // Generate the embedding result for the full text
-        guard let embeddingResult = embedding.embeddingResult(for: text, language: .english) else {
-            throw EmbeddingError.embeddingGenerationFailed("Could not generate embedding result")
+        let embeddingResult: NLContextualEmbeddingResult
+        do {
+            embeddingResult = try embedding.embeddingResult(for: text, language: .english)
+        } catch {
+            throw EmbeddingError.embeddingGenerationFailed("Could not generate embedding result: \(error.localizedDescription)")
         }
 
-        // Get the vector for the full text range
-        let range = text.startIndex..<text.endIndex
-        guard let vector = embeddingResult.vector(for: range) else {
-            throw EmbeddingError.embeddingGenerationFailed("Could not extract vector for text range")
+        // Collect all token vectors for mean pooling
+        var tokenVectors: [[Float]] = []
+        let dim = embedding.dimension
+
+        embeddingResult.enumerateTokenVectors(in: text.startIndex..<text.endIndex) { vector, _ in
+            // Convert vector to Float array
+            var floatVector = [Float](repeating: 0, count: dim)
+            for i in 0..<dim {
+                floatVector[i] = Float(vector[i])
+            }
+            tokenVectors.append(floatVector)
+            return true // Continue enumeration
         }
 
-        // Convert to Float array
-        return (0..<embedding.dimension).map { Float(vector[$0]) }
+        guard !tokenVectors.isEmpty else {
+            throw EmbeddingError.embeddingGenerationFailed("No token vectors generated")
+        }
+
+        // Mean pooling: average all token vectors
+        return meanPool(tokenVectors, dimension: dim)
+    }
+
+    /// Compute mean pooling of token vectors using Accelerate
+    private func meanPool(_ vectors: [[Float]], dimension: Int) -> [Float] {
+        var result = [Float](repeating: 0, count: dimension)
+        let count = Float(vectors.count)
+
+        for vector in vectors {
+            vDSP_vadd(result, 1, vector, 1, &result, 1, vDSP_Length(dimension))
+        }
+
+        var scale = 1.0 / count
+        vDSP_vsmul(result, 1, &scale, &result, 1, vDSP_Length(dimension))
+
+        return result
     }
 
     /// Generate embeddings for multiple texts

@@ -1,33 +1,26 @@
 import Foundation
-import ObjectBox
+import SwiftData
 
-// objectbox: entity
-/// ObjectBox entity for storing embedding vectors with HNSW vector search support
-public class EmbeddingVector: Identifiable, @unchecked Sendable {
-    /// ObjectBox-managed unique identifier
-    public var id: Id = 0
+/// SwiftData model for storing embedding vectors with similarity search support
+@Model
+public final class EmbeddingVector {
+    /// Unique document identifier
+    @Attribute(.unique) public var documentId: String
 
-    /// Reference to the paragraph's documentId in SwiftData
-    public var documentId: String = ""
-
-    /// The embedding vector for HNSW similarity search
-    /// NLContextualEmbedding produces variable-dimension vectors based on the script
-    // objectbox: hnswIndex: dimensions=512, neighborsPerNode=30, indexingSearchCount=100
-    public var embedding: HnswVector<Float32> = HnswVector()
+    /// The embedding vector stored as Data for efficiency
+    public var embeddingData: Data
 
     /// The paragraph text (stored for quick access during search)
-    public var text: String = ""
+    public var text: String
 
     /// Source file name
-    public var sourceFile: String = ""
+    public var sourceFile: String
 
     /// Paragraph ID in original document
-    public var paragraphId: Int = 0
+    public var paragraphId: Int
 
     /// Author category raw value for filtering
-    public var authorRaw: String = ""
-
-    public init() {}
+    public var authorRaw: String
 
     public init(
         documentId: String,
@@ -38,14 +31,43 @@ public class EmbeddingVector: Identifiable, @unchecked Sendable {
         author: Author
     ) {
         self.documentId = documentId
-        self.embedding = HnswVector(embedding)
+        self.embeddingData = embedding.withUnsafeBufferPointer { Data(buffer: $0) }
         self.text = text
         self.sourceFile = sourceFile
         self.paragraphId = paragraphId
         self.authorRaw = author.rawValue
     }
 
+    /// Get the embedding as a Float array
+    public var embedding: [Float] {
+        embeddingData.withUnsafeBytes { buffer in
+            Array(buffer.bindMemory(to: Float.self))
+        }
+    }
+
+    /// Get the author enum value
     public var author: Author {
         Author(rawValue: authorRaw) ?? .other
+    }
+
+    /// Calculate cosine similarity with another vector
+    public func cosineSimilarity(with queryVector: [Float]) -> Float {
+        let vec = embedding
+        guard vec.count == queryVector.count else { return 0 }
+
+        var dotProduct: Float = 0
+        var normA: Float = 0
+        var normB: Float = 0
+
+        for i in 0..<vec.count {
+            dotProduct += vec[i] * queryVector[i]
+            normA += vec[i] * vec[i]
+            normB += queryVector[i] * queryVector[i]
+        }
+
+        let denominator = sqrt(normA) * sqrt(normB)
+        guard denominator > 0 else { return 0 }
+
+        return dotProduct / denominator
     }
 }

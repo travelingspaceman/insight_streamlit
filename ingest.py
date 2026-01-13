@@ -2,11 +2,14 @@
 """
 Document ingestion script for Bahá'í Writings semantic search.
 Processes .docx files, chunks by paragraphs, and stores embeddings in Pinecone.
+Also supports exporting paragraphs to JSON for use with Swift embedding generator.
 """
 
 import os
+import json
 import logging
 import shutil
+import argparse
 from pathlib import Path
 from typing import List, Dict, Any
 from pinecone import Pinecone, ServerlessSpec
@@ -316,5 +319,144 @@ def main():
     # Print final statistics
     ingestor.get_index_stats()
 
+def export_paragraphs_to_json(input_dir: str = "./corpus_indexed", output_file: str = "paragraphs.json"):
+    """
+    Export all paragraphs from DOCX files to JSON for use with Swift embedding generator.
+    This does not require any API keys.
+    """
+    input_path = Path(input_dir)
+    docx_files = list(input_path.glob("*.docx"))
+
+    if not docx_files:
+        logger.warning(f"No .docx files found in {input_dir}")
+        return
+
+    logger.info(f"Found {len(docx_files)} documents to process")
+
+    all_paragraphs = []
+
+    # Create a minimal ingestor just for paragraph extraction (no API keys needed)
+    class ParagraphExtractor:
+        def get_author_from_filename(self, filename: str) -> str:
+            """Determine the author based on filename."""
+            filename_lower = filename.lower().replace('.docx', '')
+
+            bahaullah_works = [
+                'kitab-i-iqan', 'hidden-words', 'gleanings-writings-bahaullah',
+                'kitab-i-aqdas-2', 'epistle-son-wolf', 'gems-divine-mysteries',
+                'summons-lord-hosts', 'tablets-bahaullah', 'tabernacle-unity',
+                'prayers-meditations'
+            ]
+            abdul_baha_works = [
+                'some-answered-questions', 'paris-talks', 'promulgation-universal-peace',
+                'memorials-faithful', 'selections-writings-abdul-baha',
+                'secret-divine-civilization', 'travelers-narrative',
+                'will-testament-abdul-baha', 'tablets-divine-plan', 'tablet-auguste-forel'
+            ]
+            bab_works = ['selections-writings-bab']
+            shoghi_works = [
+                'advent-divine-justice', 'god-passes-by', 'promised-day-come',
+                'world-order-bahaullah'
+            ]
+            uhj_works = [
+                'the-institution-of-the-counsellors', 'turning-point', 'muhj-1963-1986'
+            ]
+            compilation_works = ['days-remembrance', 'light-of-the-world']
+
+            if filename_lower in bahaullah_works:
+                return "Bahá'u'lláh"
+            elif filename_lower in abdul_baha_works:
+                return "'Abdu'l-Bahá"
+            elif filename_lower in bab_works:
+                return "The Báb"
+            elif filename_lower in shoghi_works:
+                return "Shoghi Effendi"
+            elif filename_lower in uhj_works:
+                return "Universal House of Justice"
+            elif filename_lower in compilation_works:
+                return "Compilations"
+            elif filename_lower.startswith(('19', '20')) and '_' in filename_lower:
+                return "Universal House of Justice"
+            else:
+                return "Other"
+
+        def extract_paragraphs_from_docx(self, file_path: str) -> List[Dict[str, Any]]:
+            """Extract paragraphs from a .docx file, combining short paragraphs."""
+            logger.info(f"Processing document: {file_path}")
+
+            doc = Document(file_path)
+            raw_paragraphs = []
+
+            for i, paragraph in enumerate(doc.paragraphs):
+                text = paragraph.text.strip()
+                if text:
+                    raw_paragraphs.append({"text": text, "original_id": i})
+
+            min_words = 100
+            combined_paragraphs = []
+            i = 0
+
+            while i < len(raw_paragraphs):
+                current_text = raw_paragraphs[i]["text"]
+                current_word_count = len(current_text.split())
+                start_id = raw_paragraphs[i]["original_id"]
+                combined_ids = [start_id]
+
+                if current_word_count < min_words and i < len(raw_paragraphs) - 1:
+                    j = i + 1
+                    while j < len(raw_paragraphs) and len(current_text.split()) < min_words:
+                        next_text = raw_paragraphs[j]["text"]
+                        current_text += " " + next_text
+                        combined_ids.append(raw_paragraphs[j]["original_id"])
+                        j += 1
+                    i = j
+                else:
+                    i += 1
+
+                if len(combined_ids) == 1:
+                    document_id = f"{Path(file_path).stem}_para_{start_id}"
+                else:
+                    document_id = f"{Path(file_path).stem}_para_{combined_ids[0]}-{combined_ids[-1]}"
+
+                combined_paragraphs.append({
+                    "text": current_text,
+                    "paragraph_id": start_id,
+                    "source_file": Path(file_path).name,
+                    "document_id": document_id,
+                    "author": self.get_author_from_filename(Path(file_path).name)
+                })
+
+            logger.info(f"Extracted {len(raw_paragraphs)} raw paragraphs, combined into {len(combined_paragraphs)} final paragraphs")
+            return combined_paragraphs
+
+    extractor = ParagraphExtractor()
+
+    for docx_file in sorted(docx_files):
+        try:
+            paragraphs = extractor.extract_paragraphs_from_docx(str(docx_file))
+            all_paragraphs.extend(paragraphs)
+            logger.info(f"Processed {docx_file.name}: {len(paragraphs)} paragraphs")
+        except Exception as e:
+            logger.error(f"Failed to process {docx_file}: {e}")
+
+    # Write to JSON
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(all_paragraphs, f, ensure_ascii=False, indent=2)
+
+    logger.info(f"Exported {len(all_paragraphs)} paragraphs to {output_file}")
+    return all_paragraphs
+
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Bahá'í Writings ingestion and export tool")
+    parser.add_argument('--export-json', type=str, metavar='OUTPUT_FILE',
+                        help='Export paragraphs to JSON file (no API keys required)')
+    parser.add_argument('--input-dir', type=str, default='./corpus_indexed',
+                        help='Input directory containing .docx files (default: ./corpus_indexed)')
+
+    args = parser.parse_args()
+
+    if args.export_json:
+        export_paragraphs_to_json(args.input_dir, args.export_json)
+    else:
+        main()

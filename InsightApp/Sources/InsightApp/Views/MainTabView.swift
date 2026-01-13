@@ -28,7 +28,7 @@ public struct MainTabView: View {
                         }
                         .tag(1)
                 }
-                .tint(Color("AccentColor", bundle: .module))
+                .tint(.accentColor)
             } else if let error = loadingError {
                 VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.triangle")

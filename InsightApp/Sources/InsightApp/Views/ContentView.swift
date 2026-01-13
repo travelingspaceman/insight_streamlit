@@ -88,7 +88,6 @@ public struct ContentView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .tint(Color("AccentColor", bundle: .module))
             .disabled(viewModel.isSearchDisabled)
         }
         .padding(.horizontal)

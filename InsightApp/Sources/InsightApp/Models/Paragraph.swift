@@ -3,7 +3,7 @@ import SwiftData
 
 /// Represents a paragraph from the Bahá'í writings
 @Model
-public final class Paragraph: @unchecked Sendable {
+public final class Paragraph {
     /// Unique identifier for this paragraph
     @Attribute(.unique)
     public var documentId: String
