@@ -97,16 +97,21 @@ public struct ContentView: View {
     private var resultsList: some View {
         Group {
             if viewModel.results.isEmpty && !viewModel.isLoading {
-                ContentUnavailableView {
-                    Label("No Results", systemImage: "doc.text.magnifyingglass")
-                } description: {
-                    Text("Enter a search query to find relevant passages from the Bahá'í writings.")
+                ScrollView {
+                    ContentUnavailableView {
+                        Label("No Results", systemImage: "doc.text.magnifyingglass")
+                    } description: {
+                        Text("Enter a search query to find relevant passages from the Bahá'í writings.")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .scrollDismissesKeyboard(.interactively)
             } else {
                 List(viewModel.results) { result in
                     SearchResultRow(result: result)
                 }
                 .listStyle(.plain)
+                .scrollDismissesKeyboard(.interactively)
             }
         }
     }

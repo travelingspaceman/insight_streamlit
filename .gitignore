@@ -17,3 +17,6 @@ chroma_db/
 
 InsightApp/.build/
 InsightApp/Tools/EmbeddingGenerator/.build/
+InsightApp/Sources/InsightApp/Resources/MiniLM.mlpackage/Data/com.apple.CoreML/weights/weight.bin
+InsightApp/Sources/InsightApp/Resources/MiniLM.mlpackage/Data/com.apple.CoreML/model.mlmodel
+InsightApp/Sources/InsightApp/Resources/vocab.txt

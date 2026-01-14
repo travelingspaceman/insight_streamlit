@@ -1,33 +1,43 @@
 import Foundation
-import NaturalLanguage
+import CoreML
 import Accelerate
 
 /// Errors that can occur during embedding generation
 public enum EmbeddingError: Error, LocalizedError {
-    case embeddingNotAvailable
-    case embeddingGenerationFailed(String)
-    case assetLoadFailed
+    case modelNotFound
+    case modelLoadFailed(String)
+    case tokenizationFailed(String)
+    case inferenceFailed(String)
     case modelNotReady
 
     public var errorDescription: String? {
         switch self {
-        case .embeddingNotAvailable:
-            return "NLContextualEmbedding is not available on this device"
-        case .embeddingGenerationFailed(let message):
+        case .modelNotFound:
+            return "MiniLM.mlmodelc not found in app bundle"
+        case .modelLoadFailed(let message):
+            return "Failed to load embedding model: \(message)"
+        case .tokenizationFailed(let message):
+            return "Failed to tokenize text: \(message)"
+        case .inferenceFailed(let message):
             return "Failed to generate embedding: \(message)"
-        case .assetLoadFailed:
-            return "Failed to load embedding model assets"
         case .modelNotReady:
             return "Embedding model is not ready yet"
         }
     }
 }
 
-/// Service for generating text embeddings using Apple's NLContextualEmbedding
+/// Service for generating text embeddings using Core ML MiniLM model
 /// Runs entirely on-device for privacy and offline capability
 public actor EmbeddingService {
-    private var embedding: NLContextualEmbedding?
+    private var model: MLModel?
+    private var tokenizer: BertTokenizer?
     private var isReady = false
+
+    /// Embedding dimension (paraphrase-MiniLM-L6-v2 uses 384)
+    public static let embeddingDimension = 384
+
+    /// Max sequence length
+    public static let maxSequenceLength = 128
 
     /// Shared instance for convenience
     public static let shared = EmbeddingService()
@@ -37,37 +47,25 @@ public actor EmbeddingService {
     /// Prepare the embedding model for use
     /// Call this before generating embeddings to ensure the model is loaded
     public func prepare() async throws {
-        // Check if contextual embedding is available for English
-        guard let contextualEmbedding = NLContextualEmbedding(language: .english) else {
-            throw EmbeddingError.embeddingNotAvailable
+        // Load tokenizer
+        do {
+            tokenizer = try BertTokenizer(maxLength: Self.maxSequenceLength)
+        } catch {
+            throw EmbeddingError.tokenizationFailed(error.localizedDescription)
         }
 
-        // Request assets if needed
-        if contextualEmbedding.hasAvailableAssets {
-            // Load the model
-            try contextualEmbedding.load()
-            self.embedding = contextualEmbedding
-            self.isReady = true
-        } else {
-            // Request asset download and wait for it
-            let result = await withCheckedContinuation { (continuation: CheckedContinuation<NLContextualEmbedding.AssetsResult, Never>) in
-                contextualEmbedding.requestAssets { result, _ in
-                    continuation.resume(returning: result)
-                }
-            }
+        // Load Core ML model
+        guard let modelURL = Bundle.main.url(forResource: "MiniLM", withExtension: "mlmodelc") else {
+            throw EmbeddingError.modelNotFound
+        }
 
-            switch result {
-            case .available:
-                try contextualEmbedding.load()
-                self.embedding = contextualEmbedding
-                self.isReady = true
-            case .notAvailable:
-                throw EmbeddingError.embeddingNotAvailable
-            case .error:
-                throw EmbeddingError.assetLoadFailed
-            @unknown default:
-                throw EmbeddingError.assetLoadFailed
-            }
+        do {
+            let config = MLModelConfiguration()
+            config.computeUnits = .cpuAndNeuralEngine
+            model = try MLModel(contentsOf: modelURL, configuration: config)
+            isReady = true
+        } catch {
+            throw EmbeddingError.modelLoadFailed(error.localizedDescription)
         }
     }
 
@@ -78,60 +76,59 @@ public actor EmbeddingService {
 
     /// Get the dimension of the embedding vectors
     public var dimension: Int {
-        embedding?.dimension ?? 512
+        Self.embeddingDimension
     }
 
-    /// Generate an embedding for the given text using mean pooling
+    /// Generate an embedding for the given text
     /// - Parameter text: The text to generate an embedding for
-    /// - Returns: Array of floating point values representing the embedding
+    /// - Returns: Array of floating point values representing the embedding (384 dimensions)
     public func generateEmbedding(for text: String) throws -> [Float] {
-        guard isReady, let embedding else {
+        guard isReady, let model = model, let tokenizer = tokenizer else {
             throw EmbeddingError.modelNotReady
         }
 
-        // Generate the embedding result for the full text
-        let embeddingResult: NLContextualEmbeddingResult
+        // Tokenize the input
+        let (inputIds, attentionMask) = tokenizer.encode(text)
+
+        // Create MLMultiArray inputs
+        guard let inputIdsArray = try? MLMultiArray(shape: [1, NSNumber(value: Self.maxSequenceLength)], dataType: .int32),
+              let attentionMaskArray = try? MLMultiArray(shape: [1, NSNumber(value: Self.maxSequenceLength)], dataType: .int32) else {
+            throw EmbeddingError.inferenceFailed("Failed to create input arrays")
+        }
+
+        // Fill the arrays
+        for i in 0..<Self.maxSequenceLength {
+            inputIdsArray[i] = NSNumber(value: inputIds[i])
+            attentionMaskArray[i] = NSNumber(value: attentionMask[i])
+        }
+
+        // Create feature provider
+        let inputFeatures = try MLDictionaryFeatureProvider(dictionary: [
+            "input_ids": MLFeatureValue(multiArray: inputIdsArray),
+            "attention_mask": MLFeatureValue(multiArray: attentionMaskArray)
+        ])
+
+        // Run inference
+        let output: MLFeatureProvider
         do {
-            embeddingResult = try embedding.embeddingResult(for: text, language: .english)
+            output = try model.prediction(from: inputFeatures)
         } catch {
-            throw EmbeddingError.embeddingGenerationFailed("Could not generate embedding result: \(error.localizedDescription)")
+            throw EmbeddingError.inferenceFailed(error.localizedDescription)
         }
 
-        // Collect all token vectors for mean pooling
-        var tokenVectors: [[Float]] = []
-        let dim = embedding.dimension
-
-        embeddingResult.enumerateTokenVectors(in: text.startIndex..<text.endIndex) { vector, _ in
-            // Convert vector to Float array
-            var floatVector = [Float](repeating: 0, count: dim)
-            for i in 0..<dim {
-                floatVector[i] = Float(vector[i])
-            }
-            tokenVectors.append(floatVector)
-            return true // Continue enumeration
+        // Extract embeddings
+        guard let embeddingsFeature = output.featureValue(for: "embeddings"),
+              let embeddingsArray = embeddingsFeature.multiArrayValue else {
+            throw EmbeddingError.inferenceFailed("Could not extract embeddings from model output")
         }
 
-        guard !tokenVectors.isEmpty else {
-            throw EmbeddingError.embeddingGenerationFailed("No token vectors generated")
+        // Convert to Float array
+        var embedding = [Float](repeating: 0, count: Self.embeddingDimension)
+        for i in 0..<Self.embeddingDimension {
+            embedding[i] = embeddingsArray[i].floatValue
         }
 
-        // Mean pooling: average all token vectors
-        return meanPool(tokenVectors, dimension: dim)
-    }
-
-    /// Compute mean pooling of token vectors using Accelerate
-    private func meanPool(_ vectors: [[Float]], dimension: Int) -> [Float] {
-        var result = [Float](repeating: 0, count: dimension)
-        let count = Float(vectors.count)
-
-        for vector in vectors {
-            vDSP_vadd(result, 1, vector, 1, &result, 1, vDSP_Length(dimension))
-        }
-
-        var scale = 1.0 / count
-        vDSP_vsmul(result, 1, &scale, &result, 1, vDSP_Length(dimension))
-
-        return result
+        return embedding
     }
 
     /// Generate embeddings for multiple texts
@@ -149,8 +146,7 @@ public actor EmbeddingService {
         return embeddings
     }
 
-    /// Generate an embedding for a query (optimized for search)
-    /// This uses the same embedding method but can be extended for query-specific processing
+    /// Generate an embedding for a query (same as regular embedding for this model)
     public func generateQueryEmbedding(for query: String) throws -> [Float] {
         try generateEmbedding(for: query)
     }
@@ -159,7 +155,7 @@ public actor EmbeddingService {
 // MARK: - Cosine Similarity
 
 extension EmbeddingService {
-    /// Calculate cosine similarity between two vectors
+    /// Calculate cosine similarity between two vectors using Accelerate
     public static func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
         guard a.count == b.count, !a.isEmpty else { return 0 }
 
@@ -167,11 +163,9 @@ extension EmbeddingService {
         var normA: Float = 0
         var normB: Float = 0
 
-        for i in 0..<a.count {
-            dotProduct += a[i] * b[i]
-            normA += a[i] * a[i]
-            normB += b[i] * b[i]
-        }
+        vDSP_dotpr(a, 1, b, 1, &dotProduct, vDSP_Length(a.count))
+        vDSP_dotpr(a, 1, a, 1, &normA, vDSP_Length(a.count))
+        vDSP_dotpr(b, 1, b, 1, &normB, vDSP_Length(b.count))
 
         let denominator = sqrt(normA) * sqrt(normB)
         guard denominator > 0 else { return 0 }
